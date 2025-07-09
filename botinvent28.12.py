@@ -6,10 +6,10 @@ from telegram import InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.ext import ApplicationBuilder
 
-API_TOKEN = '7649550827:AAGA3iu1YW0XSFI8uMIwR1UzCVNInNcbHao'
+API_TOKEN = 'тут_токен'
 ADMIN_ID = 214183717
 
-# ЛОГИ
+#ЛОГИ
 logging.basicConfig(
     level=logging.INFO, 
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -22,21 +22,20 @@ logging.basicConfig(
 #Основной логгер
 logger = logging.getLogger(__name__)
 
-# Уровень для специфичных логгеров
+#Уровень для специфичных логгеров
 logging.getLogger("httpx").setLevel(logging.WARNING)  # Отключаем HTTP-логи уровня INFO
 
-# Фильтр для исключения неинформативных сообщений
+#Фильтр для исключения неинформативных сообщений
 class CategoryLogFilter(logging.Filter):
     def filter(self, record):
         # Логи ошибок и предупреждений оставляем в файле, INFO в файл не пишем
         return record.levelno >= logging.WARNING or 'таблиц' in record.msg.lower()
 
-# Применяем фильтр к файловому обработчику
 for handler in logger.handlers:
     if isinstance(handler, RotatingFileHandler):
         handler.addFilter(CategoryLogFilter())
         
-# Обработчик отправки логов
+#Обработчик отправки логов
 async def send_logs(update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id == ADMIN_ID:
         try:
@@ -95,6 +94,7 @@ async def handle_file(update, context: ContextTypes.DEFAULT_TYPE):
         await process_files(update, context)
     else:
         await update.message.reply_text("Вы уже загрузили два файла. Чтобы начать заново, используйте команду /start.")
+        
 #Обработка таблиц 
 async def process_files(update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_data = context.user_data
@@ -232,22 +232,22 @@ async def process_files(update, context: ContextTypes.DEFAULT_TYPE) -> None:
             '2780.W600':'2780.W600',
         }
 
-        #Переименовываем категорию как в солво
+        #Переименовываем категорию как в WMS
         df.loc[:, 'Категория'] = df['Категория'].replace(category_map)
         df = df[~df['Артикул'].isin(category_map)]
 
-        # Ожидаемые категории из category_map
+        #Ожидаемые категории из category_map
         expected_categories = set(category_map.values())
         
-        # Фактические категории в столбце 'Категория'
+        #Фактические категории в столбце 'Категория'
         actual_categories = set(df['Категория'].dropna().unique())
         
-        # Проверка: хотя бы одно ожидаемое значение должно присутствовать
+        #Проверка на хотя бы одно ожидаемое значение 
         if not expected_categories.intersection(actual_categories):
             await update.message.reply_text(
                 "Пожалуйста, проверьте, что вы выбрали при выгрузке отчета из 1С вариант отчета 'Для сверки БД'. Ваш файл содержит неизвестные категории или в столбце 'Категория' отсутствуют ожидаемые значения."
             )
-            return  # Прерываем выполнение функции, если нет ожидаемых категорий
+            return 
             
         for column in ['Остаток']:
             df[column] = pd.to_numeric(df[column], errors='coerce').fillna(0).astype(int)
@@ -257,7 +257,7 @@ async def process_files(update, context: ContextTypes.DEFAULT_TYPE) -> None:
         print(df.head(3))
         print("Файл 1С успешно обработан")
 
-        #Обработка таблицы СОЛВО
+        #Обработка таблицы СОЛВО (WMS)
         gn = gn.drop(index=[0, 1])
         gn.columns = [''] * len(gn.columns)
         gncolumns = ['Код товара', 'Артикул', 'Номенклатура', 'Категория', 'Остаток']
@@ -279,31 +279,30 @@ async def process_files(update, context: ContextTypes.DEFAULT_TYPE) -> None:
         print("Датафрейм grouped_gn:")
         print(grouped_gn.head(3))
 
-        # Объединение таблиц 1С и СОЛВО
+        #Объединение таблиц 1С и СОЛВО
         print("Начинаем объединение данных")
         ost = pd.merge(df, grouped_gn[['Код товара', 'Артикул', 'Категория', 'Остаток','Номенклатура']], 
                         on=['Код товара', 'Артикул', 'Категория'], how='outer', suffixes=('_1C', '_SLV'))
         
-        # Добавляем столбец "Разница Остаток"
+        #Добавляем столбец "Разница Остаток"
         ost['Разница Остаток'] = ost['Остаток_1C'] - ost['Остаток_SLV']
 
         print("Датафрейм ost:")
         print(ost.head(3))
         
-        # Находим расхождения в остатках
+        #Находим расхождения в остатках
         diff_ost = ost[ost['Разница Остаток'] != 0]
 
-        # Заполняем NaN в столбцах Номенклатура_1C и Номенклатура_SLV, оставляем только Номенклатура
+        #Заполняем NaN в столбцах Номенклатура_1C и Номенклатура_SLV, оставляем только Номенклатура
         diff_ost.loc[:, 'Номенклатура_1C'] = diff_ost.loc[:,'Номенклатура_1C'].fillna(diff_ost.loc[:,'Номенклатура_SLV'])
         diff_ost.loc[:,'Номенклатура_SLV'] = diff_ost.loc[:,'Номенклатура_SLV'].fillna(diff_ost.loc[:,'Номенклатура_1C'])
         
-        # Создаем полную копию DataFrame
+        #Создаем полную копию DataFrame
         diff_ost = diff_ost.copy()
         
-        # Теперь безопасно изменяем значения
+        #Теперь безопасно изменяем значения
         diff_ost.loc[:, 'Номенклатура'] = diff_ost['Номенклатура_1C']
 
-        # Удаляем столбцы Номенклатура_1C и Номенклатура_SLV
         diff_ost = diff_ost.drop(columns=['Номенклатура_1C', 'Номенклатура_SLV'])
 
         # Заполняем NaN в столбце Остаток_1C значением "Нет данных в 1С"
@@ -315,27 +314,27 @@ async def process_files(update, context: ContextTypes.DEFAULT_TYPE) -> None:
         print("Датафрейм diff_ost:")
         print(diff_ost.head(3))
 
-        # Проверяем, есть ли расхождения
+        #Проверяем, есть ли расхождения
         if diff_ost.empty:
             await update.message.reply_text("Нет расхождений между таблицами.")
             return
         
-        # Порядок столбцов для финального файла
+        #Порядок столбцов для финального файла
         new_columns_order = ['Код товара', 'Артикул', 'Номенклатура', 'Категория', 'Остаток_1C', 'Остаток_SLV', 'Разница Остаток']
         existing_columns = [col for col in new_columns_order if col in diff_ost.columns]
         diff_ost = diff_ost[existing_columns]
         
-        # Сохраняем таблицу в файл
+        #Сохраняем таблицу в файл
         output = BytesIO()
         diff_ost.to_excel(output, index=False)
         output.seek(0)
         
-        # Отправляем файл пользователю
+        #Отправляем файл пользователю
         await update.message.reply_document(document=InputFile(output, filename="Сравнение остатков.xlsx"))
         output.close()
         print("Файл успешно отправлен пользователю")
 
-        user_data.clear()  # Очистка данных пользователя
+        user_data.clear()  #Очистка данных пользователя
     except KeyError as ke:
         await update.message.reply_text(f"Ошибка в структуре данных: отсутствует необходимый столбец ({ke}). Проверьте, что файлы содержат корректные столбцы.")
         print(f"Ошибка KeyError: {ke}")
@@ -344,7 +343,7 @@ async def process_files(update, context: ContextTypes.DEFAULT_TYPE) -> None:
         print(f"Ошибка обработки: {e}")
 
         
-# Основная функция
+#Основная функция
 def main():
     app = Application.builder().token(API_TOKEN).build()
 
